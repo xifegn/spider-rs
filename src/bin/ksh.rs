@@ -1,57 +1,100 @@
 use std::collections::HashMap;
 use std::fs::File;
+use rand::{thread_rng, Rng};
 use std::io::copy;
 use std::path::PathBuf;
+use rand::distributions::Alphanumeric;
 use reqwest::{Error, Response};
-use serde_json::json;
+use serde_json::{json};
+use async_recursion::async_recursion;
+
+
+
+static USERID: &str = "3xhtw3p338e7ayu";
+static PCURSOR: &str = "1.692324812239E12";
 
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let resp = post_url().await.unwrap();
-    // println!("{:?}", resp.text().await?);
-    let parse_url = parse_url(resp).await.unwrap();
-    let _ = download_video(parse_url).await;
+    let _ =  scheduler(USERID, PCURSOR).await.unwrap();
+    // let _ = scheduler(USERID, "").await.unwrap();
     Ok(())
 }
 
 
-async fn post_url() -> Result<Response, Error> {
+async fn post_url(pcursor: &str, user_id: &str) -> Result<Response, Error> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36".parse().unwrap());
-    headers.insert("Cookie", "kpf=PC_WEB; clientid=3; did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABCnchixT_fxx4WAEemI74l85MMffx8ogHK1zxpwWOWB9G-4vKCFgfcedRPLDQgqxbHaoVhssKDmsQjpOakW9T4qDKtQeHAchYCzv6P-8Plm_-d-45BC7X7TMzbonRpblo37gJh8zAsmdyk7dy12xsf6-mC79yxLMp4gfw0OeP8mdy1Jls4ik7Y3WkNFLKHo5_8LZW9yHfk21CSAUcN6SYlxoS9XMBYg26NCtIxdOwhbHEY-u6IiDw_ZSn1a2CT5KHGuR2EXH_Ox8zXBK1iv5y1xRqkfpTxigFMAE; kuaishou.server.web_ph=9e20ae9ffdf4c83874f82617aea448747ac8; kpn=KUAISHOU_VISION".parse().unwrap());
-    let data = json!({
-        "operationName": "visionProfilePhotoList",
-        "variables": {
-            "userId": "3x6krpyskdwg4au",
-            "pcursor": "",
-            "page": "profile"
-        },
-        "query": "fragment photoContent on PhotoEntity {\n  __typename\n  id\n  duration\n  caption\n  originCaption\n  likeCount\n  viewCount\n  commentCount\n  realLikeCount\n  coverUrl\n  photoUrl\n  photoH265Url\n  manifest\n  manifestH265\n  videoResource\n  coverUrls {\n    url\n    __typename\n  }\n  timestamp\n  expTag\n  animatedCoverUrl\n  distance\n  videoRatio\n  liked\n  stereoType\n  profileUserTopPhoto\n  musicBlocked\n  riskTagContent\n  riskTagUrl\n}\n\nfragment recoPhotoFragment on recoPhotoEntity {\n  __typename\n  id\n  duration\n  caption\n  originCaption\n  likeCount\n  viewCount\n  commentCount\n  realLikeCount\n  coverUrl\n  photoUrl\n  photoH265Url\n  manifest\n  manifestH265\n  videoResource\n  coverUrls {\n    url\n    __typename\n  }\n  timestamp\n  expTag\n  animatedCoverUrl\n  distance\n  videoRatio\n  liked\n  stereoType\n  profileUserTopPhoto\n  musicBlocked\n  riskTagContent\n  riskTagUrl\n}\n\nfragment feedContent on Feed {\n  type\n  author {\n    id\n    name\n    headerUrl\n    following\n    headerUrls {\n      url\n      __typename\n    }\n    __typename\n  }\n  photo {\n    ...photoContent\n    ...recoPhotoFragment\n    __typename\n  }\n  canAddComment\n  llsid\n  status\n  currentPcursor\n  tags {\n    type\n    name\n    __typename\n  }\n  __typename\n}\n\nquery visionProfilePhotoList($pcursor: String, $userId: String, $page: String, $webPageArea: String) {\n  visionProfilePhotoList(pcursor: $pcursor, userId: $userId, page: $page, webPageArea: $webPageArea) {\n    result\n    llsid\n    webPageArea\n    feeds {\n      ...feedContent\n      __typename\n    }\n    hostName\n    pcursor\n    __typename\n  }\n}\n"
-    });
+    headers.insert("Cookie", "did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABGEFqeDT6Yb9DeWuCsQmF8wgs6HO3ZNiJKa7s9PiFCKVr8EYDnCQ2LS4bZ7ywQiRxvZCK3U-s5I9KqiCZg89S5vrsh6Ht4pZQ_e6ZVlTu-X7V0fxIhpVTq875bklDvfOtQoCRvLOYkJGf7Q1xdljrXLUJ4i_Q0wXROKb4nOAwQ_Cpk_j6BARSAGZxuRe3ibSJ_fDdn47qRGTLTIa3oe_a8hoSoJCKbxHIWXjzVWap_gGna5KjIiDz-F-4pCp4l4BRo2Kt4vcATsqCEEyxtPbjgPm_VW9qjSgFMAE; kuaishou.server.web_ph=94d0e1f62caf3f9d08c083f60fc6023ee2a0; kpn=KUAISHOU_VISION".parse().unwrap());
+    let mut data = HashMap::new();
+    let mut variables = HashMap::new();
+    variables.insert("userId".to_string(), user_id.to_string());
+    variables.insert("pcursor".to_string(), pcursor.to_string());
+    variables.insert("page".to_string(), "profile".to_string());
+    data.insert("operationName".to_string(), "visionProfilePhotoList".to_string());
+    let variable = json!(variables).to_string();
+    data.insert("variables".to_string(), variable);
+    data.insert("query".to_string(), "fragment photoContent on PhotoEntity {\n  __typename\n  id\n  duration\n  caption\n  originCaption\n  likeCount\n  viewCount\n  commentCount\n  realLikeCount\n  coverUrl\n  photoUrl\n  photoH265Url\n  manifest\n  manifestH265\n  videoResource\n  coverUrls {\n    url\n    __typename\n  }\n  timestamp\n  expTag\n  animatedCoverUrl\n  distance\n  videoRatio\n  liked\n  stereoType\n  profileUserTopPhoto\n  musicBlocked\n  riskTagContent\n  riskTagUrl\n}\n\nfragment recoPhotoFragment on recoPhotoEntity {\n  __typename\n  id\n  duration\n  caption\n  originCaption\n  likeCount\n  viewCount\n  commentCount\n  realLikeCount\n  coverUrl\n  photoUrl\n  photoH265Url\n  manifest\n  manifestH265\n  videoResource\n  coverUrls {\n    url\n    __typename\n  }\n  timestamp\n  expTag\n  animatedCoverUrl\n  distance\n  videoRatio\n  liked\n  stereoType\n  profileUserTopPhoto\n  musicBlocked\n  riskTagContent\n  riskTagUrl\n}\n\nfragment feedContent on Feed {\n  type\n  author {\n    id\n    name\n    headerUrl\n    following\n    headerUrls {\n      url\n      __typename\n    }\n    __typename\n  }\n  photo {\n    ...photoContent\n    ...recoPhotoFragment\n    __typename\n  }\n  canAddComment\n  llsid\n  status\n  currentPcursor\n  tags {\n    type\n    name\n    __typename\n  }\n  __typename\n}\n\nquery visionProfilePhotoList($pcursor: String, $userId: String, $page: String, $webPageArea: String) {\n  visionProfilePhotoList(pcursor: $pcursor, userId: $userId, page: $page, webPageArea: $webPageArea) {\n    result\n    llsid\n    webPageArea\n    feeds {\n      ...feedContent\n      __typename\n    }\n    hostName\n    pcursor\n    __typename\n  }\n}\n".to_string());
     let client = reqwest::Client::new();
     let resp = client.post("https://www.kuaishou.com/graphql")
         .headers(headers)
         .json(&data)
         .send()
         .await?;
+
     Ok(resp)
 }
 
 
-async fn parse_url(resp: Response) -> Result<HashMap<String, String>, Error> {
+#[async_recursion]
+async fn parse_url(user_id: &str, resp: Response) -> Result<Option<HashMap<String, String>>, Error> { // 返回一个 BoxFuture 类型
     let body: serde_json::Value = resp.json().await?;
     let want = body["data"]["visionProfilePhotoList"]["feeds"].clone();
+    // println!("{:?}", want);
     let mut data_stream: HashMap<String, String> = HashMap::new();
     for i in want.as_array().unwrap(){
         let name = i["photo"]["caption"].clone();
         let url = i["photo"]["photoUrl"].clone().to_string().replace("\"", "");
-        let mut name = name.to_string().replace("\n", "").replace("\"", "").replace("#", "").replace("@", "").replace(" ", "");
+        let mut name = name.to_string().chars().filter(|c| !"#@\n\" ".contains(*c)).collect::<String>();
         name.push_str(".mp4");
-        data_stream.insert(name, url);
+        if data_stream.contains_key(&name) {
+            let rng = thread_rng();
+            let suffix: String = rng
+                .sample_iter(&Alphanumeric)
+                .take(6)
+                .map(char::from)
+                .collect();
+            let mut name = name.replace(".mp4", "");
+            name.push_str(&suffix);
+            name.push_str(".mp4");
+            data_stream.insert(name, url);
+        }else {
+            data_stream.insert(name, url);
+        }
+
     }
-    Ok(data_stream)
+    let pcursor = body["data"]["visionProfilePhotoList"]["pcursor"].clone();
+    println!("{:?}", pcursor);
+    if pcursor.as_str().unwrap() != "no_more" {
+        scheduler(user_id, pcursor.as_str().unwrap()).await.unwrap();
+    }else {
+        return Ok(None)
+    }
+    Ok(Option::from(data_stream))
 }
+
+
+async fn scheduler(user_id: &str, pcursor: &str) -> Result<(), Error> {
+    let resp = post_url(pcursor, user_id).await.unwrap();
+    // println!("{:?}", resp.text().await);
+    let stream = parse_url(user_id, resp).await.unwrap();
+    // println!("{:?}", stream);
+    if stream != None {
+        let _ = download_video(stream.unwrap()).await;
+    }
+    Ok(())
+}
+
 
 async fn download_video(data: HashMap<String, String>) -> Result<(), Error> {
     let path = PathBuf::from("E:\\RustPrograms\\spider\\src\\bin\\videos");
