@@ -7,17 +7,23 @@ use rand::distributions::Alphanumeric;
 use reqwest::{Error, Response};
 use serde_json::{json};
 use async_recursion::async_recursion;
+use async_once_cell::OnceCell;
+use lazy_static::lazy_static;
+use async_std::sync::Mutex;
 
+
+lazy_static! {
+    static ref DONE: Mutex<bool> = Mutex::new(false);
+}
 
 
 static USERID: &str = "3xhtw3p338e7ayu";
 static PCURSOR: &str = "1.692324812239E12";
-
+static ONCE: OnceCell<()> = OnceCell::new();
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let _ =  scheduler(USERID, PCURSOR).await.unwrap();
-    // let _ = scheduler(USERID, "").await.unwrap();
+    let _ = scheduler(USERID, "").await.unwrap();
     Ok(())
 }
 
@@ -25,7 +31,7 @@ async fn main() -> Result<(), Error> {
 async fn post_url(pcursor: &str, user_id: &str) -> Result<Response, Error> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36".parse().unwrap());
-    headers.insert("Cookie", "did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABGEFqeDT6Yb9DeWuCsQmF8wgs6HO3ZNiJKa7s9PiFCKVr8EYDnCQ2LS4bZ7ywQiRxvZCK3U-s5I9KqiCZg89S5vrsh6Ht4pZQ_e6ZVlTu-X7V0fxIhpVTq875bklDvfOtQoCRvLOYkJGf7Q1xdljrXLUJ4i_Q0wXROKb4nOAwQ_Cpk_j6BARSAGZxuRe3ibSJ_fDdn47qRGTLTIa3oe_a8hoSoJCKbxHIWXjzVWap_gGna5KjIiDz-F-4pCp4l4BRo2Kt4vcATsqCEEyxtPbjgPm_VW9qjSgFMAE; kuaishou.server.web_ph=94d0e1f62caf3f9d08c083f60fc6023ee2a0; kpn=KUAISHOU_VISION".parse().unwrap());
+    headers.insert("Cookie", "kpf=PC_WEB; clientid=3; did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABhSAQdHJ-UuJFr33hSsWdq5UfQt8vhKdppxIun7L-J5ECoW4XWaEUTqA-aba8AjFbqqVmiBxKV0gdgGSA2pjBsco3Qlk6gUGdvmcIKlE8TDqSSCy7zfdHYD_rcdvVYga76qGVbB3EWkzTgc9IzIdMfnE8WALerGIj0bEHCjsCNHbhKkMPkAE_Sgkr7rnnZqcMFYyi64-lPvu8svNu-7IaSxoSQ7mEvdT3xtmzMcd5yI94lmh4IiDrf0v3ZPdQGtvI1IM18aPj8iKZuiPRJKrQgBIG5YJCESgFMAE; kuaishou.server.web_ph=db77ce7d5547f0061595bc8ab009ea6b2468; kpn=KUAISHOU_VISION".parse().unwrap());
     let mut data = HashMap::new();
     let mut variables = HashMap::new();
     variables.insert("userId".to_string(), user_id.to_string());
@@ -47,7 +53,7 @@ async fn post_url(pcursor: &str, user_id: &str) -> Result<Response, Error> {
 
 
 #[async_recursion]
-async fn parse_url(user_id: &str, resp: Response) -> Result<Option<HashMap<String, String>>, Error> { // 返回一个 BoxFuture 类型
+async fn parse_url(user_id: &str, resp: Response) -> Result<Option<HashMap<String, String>>, Error> {
     let body: serde_json::Value = resp.json().await?;
     let want = body["data"]["visionProfilePhotoList"]["feeds"].clone();
     // println!("{:?}", want);
@@ -71,16 +77,24 @@ async fn parse_url(user_id: &str, resp: Response) -> Result<Option<HashMap<Strin
         }else {
             data_stream.insert(name, url);
         }
-
     }
     let pcursor = body["data"]["visionProfilePhotoList"]["pcursor"].clone();
-    println!("{:?}", pcursor);
-    if pcursor.as_str().unwrap() != "no_more" {
+    // println!("{:?}", pcursor);
+    return if pcursor.as_str().unwrap() != "no_more" {
         scheduler(user_id, pcursor.as_str().unwrap()).await.unwrap();
-    }else {
-        return Ok(None)
+        Ok(Some(data_stream))
+    } else {
+        let mut done = DONE.lock().await;
+        if *done {
+            Ok(None)
+        }else {
+            ONCE.get_or_init(async {
+                let _ = post_url(PCURSOR, user_id).await.unwrap();
+            }).await;
+            *done = true;
+            Ok(Some(data_stream))
+        }
     }
-    Ok(Option::from(data_stream))
 }
 
 
@@ -88,7 +102,7 @@ async fn scheduler(user_id: &str, pcursor: &str) -> Result<(), Error> {
     let resp = post_url(pcursor, user_id).await.unwrap();
     // println!("{:?}", resp.text().await);
     let stream = parse_url(user_id, resp).await.unwrap();
-    // println!("{:?}", stream);
+    // println!("{:?}", stream.unwrap());
     if stream != None {
         let _ = download_video(stream.unwrap()).await;
     }
