@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs::File;
 use rand::{thread_rng, Rng};
-use std::io::copy;
+use std::io::{copy};
 use std::path::PathBuf;
+use std::sync::Arc;
 use rand::distributions::Alphanumeric;
 use reqwest::{Error, Response};
 use serde_json::{json};
@@ -10,6 +11,7 @@ use async_recursion::async_recursion;
 use async_once_cell::OnceCell;
 use lazy_static::lazy_static;
 use async_std::sync::Mutex;
+use tokio::sync::Semaphore;
 
 
 lazy_static! {
@@ -17,8 +19,7 @@ lazy_static! {
 }
 
 
-static USERID: &str = "3xhtw3p338e7ayu";
-static PCURSOR: &str = "1.692324812239E12";
+static USERID: &str = "3x8vx7mnmpt7nby";
 static ONCE: OnceCell<()> = OnceCell::new();
 
 #[tokio::main]
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Error> {
 async fn post_url(pcursor: &str, user_id: &str) -> Result<Response, Error> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36".parse().unwrap());
-    headers.insert("Cookie", "kpf=PC_WEB; clientid=3; did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABhSAQdHJ-UuJFr33hSsWdq5UfQt8vhKdppxIun7L-J5ECoW4XWaEUTqA-aba8AjFbqqVmiBxKV0gdgGSA2pjBsco3Qlk6gUGdvmcIKlE8TDqSSCy7zfdHYD_rcdvVYga76qGVbB3EWkzTgc9IzIdMfnE8WALerGIj0bEHCjsCNHbhKkMPkAE_Sgkr7rnnZqcMFYyi64-lPvu8svNu-7IaSxoSQ7mEvdT3xtmzMcd5yI94lmh4IiDrf0v3ZPdQGtvI1IM18aPj8iKZuiPRJKrQgBIG5YJCESgFMAE; kuaishou.server.web_ph=db77ce7d5547f0061595bc8ab009ea6b2468; kpn=KUAISHOU_VISION".parse().unwrap());
+    headers.insert("Cookie", "kpf=PC_WEB; clientid=3; did=web_b6e2297b5940946099a6c9f27c3ac5ba; userId=1722965195; kuaishou.server.web_st=ChZrdWFpc2hvdS5zZXJ2ZXIud2ViLnN0EqABiCRGwyN6RDz9aMlOsYzbmsB1rmsSqKY1zNd3eXer4nDT2ALfh30KEryKp1kwAXWT35MRaYreIHH0l7uZRJ12PQ5_qOmwSCY1kzAUarcJ9fqkISw1-eYVzhXwgQ6VFnOZUkdj8vPILovECqeMuv_ZDFB3EJ5ZO3LNJO1_2OSnBU-p8ulVE4dcrrO2eYc6cEN7H0kD8NmhVFJm6p6brxONuhoSS2UWrTnDahVDKzRYjzjLpJM-IiCg2HpIYBX9sp-gAg4ZQAkIcfvaZZPIf-nBDFbfxn5ccygFMAE; kuaishou.server.web_ph=000f2ecd585fd23276e45785403cb88b1133; kpn=KUAISHOU_VISION".parse().unwrap());
     let mut data = HashMap::new();
     let mut variables = HashMap::new();
     variables.insert("userId".to_string(), user_id.to_string());
@@ -89,7 +90,7 @@ async fn parse_url(user_id: &str, resp: Response) -> Result<Option<HashMap<Strin
             Ok(None)
         }else {
             ONCE.get_or_init(async {
-                let _ = post_url(PCURSOR, user_id).await.unwrap();
+                println!("do once hahaha");
             }).await;
             *done = true;
             Ok(Some(data_stream))
@@ -104,22 +105,32 @@ async fn scheduler(user_id: &str, pcursor: &str) -> Result<(), Error> {
     let stream = parse_url(user_id, resp).await.unwrap();
     // println!("{:?}", stream.unwrap());
     if stream != None {
-        let _ = download_video(stream.unwrap()).await;
+        let sem = Arc::new(Semaphore::new(20));
+        let _ = download_video(stream.unwrap(), sem).await;
     }
     Ok(())
 }
 
 
-async fn download_video(data: HashMap<String, String>) -> Result<(), Error> {
+async fn download_video(data:HashMap<String, String>, sem: Arc<Semaphore>) -> Result<(), Error> {
     let path = PathBuf::from("E:\\RustPrograms\\spider\\src\\bin\\videos");
-    for (filename, url) in data.iter() {
+    let mut handles = Vec::new();
+    for (filename, url) in data.into_iter() {
         let mut path = path.clone();
         path.push(filename);
-        let mut file = File::create(path.as_path()).unwrap();
-        let client = reqwest::Client::new();
-        let resp = client.get(url.as_str()).send().await?;
-        let data = resp.bytes().await?;
-        copy(&mut data.as_ref(), &mut file).unwrap();
+        let mut file = File::create(path.as_path()).expect("Failed to create file");
+        let sem_clone = Arc::clone(&sem);
+        let handle = tokio::spawn( async move {
+            let client = reqwest::Client::new();
+            let resp = client.get(url.as_str()).send().await.expect("Failed to send request");
+            let byte = resp.bytes().await.expect("Failed to get bytes");
+            copy(&mut byte.as_ref(), &mut file).expect("Failed to copy bytes");
+            drop(sem_clone);
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        handle.await.expect("Failed to join handle");
     }
     Ok(())
 }
